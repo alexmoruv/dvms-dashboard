@@ -7,15 +7,20 @@
 npm install
 ```
 
-### 2. Получите бесплатный API-ключ Gemini
-- Перейдите на https://aistudio.google.com/apikey
-- Нажмите **"Create API Key"** (бесплатно, без карты)
-- Скопируйте ключ
+### 2. Получите API-ключ Gigachat (Сбер)
+- Перейдите на https://lk.sber.ru/
+- Авторизуйтесь или зарегистрируйтесь (бесплатно)
+- Перейдите в **Компании** → **API** → **Gigachat**
+- Скопируйте **API ключ**
 
 ### 3. Создайте файл .env
-Скопируйте `.env.example` → `.env` и вставьте ключ:
+```bash
+cp .env.example .env
 ```
-VITE_GEMINI_API_KEY=ВАШ_КЛЮЧ_ЗДЕСЬ
+Отредактируйте `.env` и вставьте API ключ:
+```
+VITE_GIGACHAT_API_KEY=ВАШ_КЛЮЧ_ЗДЕСЬ
+VITE_TAVILY_API_KEY=dummy_или_реальный_ключ
 ```
 
 ### 4. Запустите
@@ -30,8 +35,8 @@ npm run dev
 
 | Вкладка | Что делает |
 |---------|-----------|
-| **Парсер** | Gemini ищет мероприятия через Google Search в 10 источниках |
-| **Excel** | Загрузка .xlsx, AI нормализует колонки автоматически |
+| **Парсер** | Tavily ищет мероприятия через Gigachat в 10 источниках |
+| **Excel** | Загрузка .xlsx, Gigachat нормализует колонки автоматически |
 | **Слияние** | Объединяет данные, удаляет дубли |
 | **Дашборд** | Сводный реестр с фильтрами и экспортом в Excel |
 
@@ -42,3 +47,12 @@ npm run dev
 **Telegram-каналы:**
 @DtRoad · @anomcic · @rustorgpred · @MoscowEcon
 @dit_moscow · @moscowexport · @subsidii_msk · @investmoscowru
+
+## 🛠️ Технический стек
+
+- **Frontend:** React 18 + Vite
+- **AI обработка:** Gigachat (Сбер) + Tavily Search
+- **Визуализация:** recharts, react-simple-maps
+- **Экспорт:** jsPDF, html2canvas, XLSX
+- **Развёртывание:** GitHub Pages
+

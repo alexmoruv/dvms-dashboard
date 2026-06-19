@@ -6,8 +6,6 @@ import { scaleLinear } from "d3-scale";
 import * as XLSX from "xlsx";
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const API_MODEL = "claude-haiku-4-5-20251001";
-
 const C = {
   bg:       "#080c14",
   surface:  "#0e1420",
@@ -133,30 +131,84 @@ function parseExcel(file) {
   });
 }
 
-// ─── CLAUDE API CALL ──────────────────────────────────────────────────────────
-async function callClaude({ system, userMsg, tools, maxTokens = 4000 }) {
-  const apiKey = import.meta.env.VITE_ANTHROPIC_API_KEY || "";
-  if (!apiKey) throw new Error("Ключ не найден. Проверьте файл .env — там должна быть строка VITE_ANTHROPIC_API_KEY=ваш_ключ");
+// ─── GIGACHAT API CALL ────────────────────────────────────────────────────────
+let gigachatTokenCache = { token: null, expiresAt: 0 };
+
+async function getGigachatToken(apiKey, rquid) {
+  const now = Date.now();
+  if (gigachatTokenCache.token && gigachatTokenCache.expiresAt > now) {
+    return gigachatTokenCache.token;
+  }
+
+  const credentials = btoa(`${apiKey}:`);
+  const res = await fetch("https://auth.api.sberbank.ru/oauth/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Accept": "application/json",
+      "RqUID": rquid,
+      "Authorization": `Basic ${credentials}`,
+    },
+    body: "scope=GIGACHAT_API_PERS&grant_type=client_credentials",
+  });
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Ошибка авторизации Gigachat: ${res.status} - ${error}`);
+  }
+
+  const data = await res.json();
+  gigachatTokenCache.token = data.access_token;
+  gigachatTokenCache.expiresAt = now + (data.expires_in * 1000 - 60000); // refresh 1 min before expiry
+  return data.access_token;
+}
+
+async function callGigachat({ system, userMsg, maxTokens = 4000 }) {
+  const apiKey = import.meta.env.VITE_GIGACHAT_API_KEY || "";
+  if (!apiKey) throw new Error("Ключ Gigachat не найден. Проверьте файл .env — там должна быть строка VITE_GIGACHAT_API_KEY=ваш_ключ");
+
+  const rquid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const token = await getGigachatToken(apiKey, rquid);
+
+  const messages = [];
+  if (system) {
+    messages.push({ role: "system", content: system });
+  }
+  messages.push({ role: "user", content: userMsg });
 
   const body = {
-    model: API_MODEL,
+    model: "GigaChat",
+    messages,
     max_tokens: maxTokens,
-    messages: [{ role: "user", content: userMsg }],
+    temperature: 0.7,
   };
-  if (system) body.system = system;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetch("https://gigachat.devices.sberbank.ru/api/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
+      "Authorization": `Bearer ${token}`,
+      "X-Client-ID": rquid,
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Claude API error ${res.status}: ${await res.text()}`);
-  return res.json();
+
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(`Gigachat API error ${res.status}: ${error}`);
+  }
+
+  const data = await res.json();
+  
+  // Convert Gigachat response format to Claude-compatible format
+  return {
+    content: [
+      {
+        type: "text",
+        text: data.choices?.[0]?.message?.content || "",
+      }
+    ]
+  };
 }
 
 // ─── PERIOD HELPER ────────────────────────────────────────────────────────────
@@ -289,7 +341,7 @@ async function runWebAgent(sources, addLog, period = { mode:"year", year:"2025" 
   const context = unique.map(r => "URL: " + r.url + "\n" + r.title + "\n" + (r.content || "").slice(0, 600) + "\n---").join("\n");
   addLog("📋 Передаю " + unique.length + " фрагментов в Claude Haiku...");
 
-  const data = await callClaude({
+  const data = await callGigachat({
     system,
     userMsg: "Период: " + pLabel + "\n\nИзвлеки мероприятия из этих результатов:\n\n" + context,
     maxTokens: 4000,
@@ -351,7 +403,7 @@ async function normalizeExcelAgent(rows, addLog) {
 Распознай колонки самостоятельно — названия могут быть на русском или английском.
 Возвращай ТОЛЬКО JSON без пояснений.`;
 
-  const data = await callClaude({
+  const data = await callGigachat({
     system,
     userMsg: `Нормализуй эти данные из Excel:\n${JSON.stringify(rows.slice(0, 100), null, 2)}`,
     maxTokens: 4000,
@@ -392,7 +444,7 @@ async function mergeAndDedup(webEvents, excelEvents, addLog) {
 В каждом событии сохраняй все поля оригинала + "_sources".
 ТОЛЬКО JSON, без пояснений.`;
 
-  const data = await callClaude({
+  const data = await callGigachat({
     system,
     userMsg: `
 Массив из веб-парсера (${webEvents.length} шт):
@@ -585,7 +637,7 @@ export default function App() {
         topIndustries: Object.entries(evts.reduce((a,e) => { (e.industry||[]).forEach(i => a[i]=(a[i]||0)+1); return a; }, {})).sort((a,b)=>b[1]-a[1]).slice(0,5),
         events: evts.slice(0,30).map(e => e.name + " (" + (e.country||"Москва") + ", " + (e.date||"") + ")")
       };
-      const data = await callClaude({
+      const data = await callGigachat({
         system: "Ты аналитик международной деловой активности города Москвы. Пиши чётко, профессионально, по-русски. Используй конкретные цифры и факты из данных.",
         userMsg: "Напиши аналитическое резюме на 250-300 слов на основе этих данных о международной деловой активности Москвы:\n\n" + JSON.stringify(stats, null, 2) + "\n\nСтруктура: 1) Общая картина активности 2) Ключевые направления и страны 3) Отраслевые приоритеты 4) Наиболее активные организаторы 5) Выводы и рекомендации",
         maxTokens: 1000,
