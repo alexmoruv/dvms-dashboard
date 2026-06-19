@@ -10,23 +10,32 @@
 
 let tokenCache = { token: null, expiresAt: 0 };
 
+// Генерация UUID v4 для заголовка RqUID
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 async function getGigachatToken(apiKey, rquid) {
   const now = Date.now();
   if (tokenCache.token && tokenCache.expiresAt > now) {
     return tokenCache.token;
   }
 
-  const credentials = Buffer.from(`${apiKey}:`).toString('base64');
-  
-  const res = await fetch('https://auth.api.sberbank.ru/oauth/token', {
+  // Authorization Key из личного кабинета — это уже готовая base64-строка,
+  // передаём её как есть, без повторного кодирования
+  const res = await fetch('https://ngw.devices.sberbank.ru:9443/api/v2/oauth', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
       'Accept': 'application/json',
       'RqUID': rquid,
-      'Authorization': `Basic ${credentials}`,
+      'Authorization': `Basic ${apiKey}`,
     },
-    body: 'scope=GIGACHAT_API_PERS&grant_type=client_credentials',
+    body: 'scope=GIGACHAT_API_PERS',
   });
 
   if (!res.ok) {
@@ -36,8 +45,11 @@ async function getGigachatToken(apiKey, rquid) {
 
   const data = await res.json();
   tokenCache.token = data.access_token;
-  tokenCache.expiresAt = now + (data.expires_in * 1000 - 60000);
-  
+  // expires_at приходит в миллисекундах (Unix timestamp), либо expires_in в секундах
+  tokenCache.expiresAt = data.expires_at
+    ? data.expires_at - 60000
+    : now + (1800 * 1000 - 60000);
+
   return data.access_token;
 }
 
@@ -61,7 +73,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Invalid request: messages array required' });
     }
 
-    const requestRquid = rquid || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const requestRquid = uuidv4();
     const token = await getGigachatToken(apiKey, requestRquid);
 
     // Формируем messages с system если нужен

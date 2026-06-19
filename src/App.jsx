@@ -140,8 +140,8 @@ async function getGigachatTokenLocal(apiKey, rquid) {
     return gigachatTokenCache.token;
   }
 
-  const credentials = btoa(`${apiKey}:`);
-  const res = await fetch("https://auth.api.sberbank.ru/oauth/token", {
+  const credentials = apiKey; // Authorization Key из ЛК — уже base64, передаём как есть
+  const res = await fetch("https://ngw.devices.sberbank.ru:9443/api/v2/oauth", {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -149,7 +149,7 @@ async function getGigachatTokenLocal(apiKey, rquid) {
       "RqUID": rquid,
       "Authorization": `Basic ${credentials}`,
     },
-    body: "scope=GIGACHAT_API_PERS&grant_type=client_credentials",
+    body: "scope=GIGACHAT_API_PERS",
   });
 
   if (!res.ok) {
