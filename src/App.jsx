@@ -134,7 +134,10 @@ function parseExcel(file) {
 // ─── GIGACHAT API CALL ────────────────────────────────────────────────────────
 let gigachatTokenCache = { token: null, expiresAt: 0 };
 
-async function getGigachatToken(apiKey, rquid) {
+// ─── GIGACHAT API CALL (через Vercel proxy) ───────────────────────────────────
+let gigachatTokenCache = { token: null, expiresAt: 0 };
+
+async function getGigachatTokenLocal(apiKey, rquid) {
   const now = Date.now();
   if (gigachatTokenCache.token && gigachatTokenCache.expiresAt > now) {
     return gigachatTokenCache.token;
@@ -159,56 +162,77 @@ async function getGigachatToken(apiKey, rquid) {
 
   const data = await res.json();
   gigachatTokenCache.token = data.access_token;
-  gigachatTokenCache.expiresAt = now + (data.expires_in * 1000 - 60000); // refresh 1 min before expiry
+  gigachatTokenCache.expiresAt = now + (data.expires_in * 1000 - 60000);
   return data.access_token;
 }
 
 async function callGigachat({ system, userMsg, maxTokens = 4000 }) {
-  const apiKey = import.meta.env.VITE_GIGACHAT_API_KEY || "";
-  if (!apiKey) throw new Error("Ключ Gigachat не найден. Проверьте файл .env — там должна быть строка VITE_GIGACHAT_API_KEY=ваш_ключ");
-
-  const rquid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const token = await getGigachatToken(apiKey, rquid);
-
-  const messages = [];
-  if (system) {
-    messages.push({ role: "system", content: system });
-  }
-  messages.push({ role: "user", content: userMsg });
-
-  const body = {
-    model: "GigaChat",
-    messages,
-    max_tokens: maxTokens,
-    temperature: 0.7,
-  };
-
-  const res = await fetch("https://gigachat.devices.sberbank.ru/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`,
-      "X-Client-ID": rquid,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const error = await res.text();
-    throw new Error(`Gigachat API error ${res.status}: ${error}`);
-  }
-
-  const data = await res.json();
+  // На продакшене используем Vercel proxy (/api/gigachat)
+  // На локальном dev сервере можно использовать и прямой API (если ключ есть в .env)
   
-  // Convert Gigachat response format to Claude-compatible format
-  return {
-    content: [
-      {
-        type: "text",
-        text: data.choices?.[0]?.message?.content || "",
+  const isProduction = import.meta.env.PROD;
+  const hasLocalKey = import.meta.env.VITE_GIGACHAT_API_KEY;
+  const useProxy = isProduction || !hasLocalKey;
+
+  try {
+    if (useProxy) {
+      // Используем Vercel Function proxy (безопасно, ключи на сервере)
+      const rquid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      
+      const res = await fetch("/api/gigachat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: userMsg }],
+          system,
+          max_tokens: maxTokens,
+          rquid,
+        }),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(`Gigachat proxy error: ${error.error}`);
       }
-    ]
-  };
+
+      return await res.json();
+    } else {
+      // Локальное развитие с VITE_GIGACHAT_API_KEY в .env
+      const apiKey = import.meta.env.VITE_GIGACHAT_API_KEY;
+      if (!apiKey) throw new Error("Ключ Gigachat не найден. Проверьте .env");
+
+      const rquid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+      const token = await getGigachatTokenLocal(apiKey, rquid);
+
+      const messages = [];
+      if (system) messages.push({ role: "system", content: system });
+      messages.push({ role: "user", content: userMsg });
+
+      const res = await fetch("https://gigachat.devices.sberbank.ru/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "X-Client-ID": rquid,
+        },
+        body: JSON.stringify({
+          model: "GigaChat",
+          messages,
+          max_tokens: maxTokens,
+          temperature: 0.7,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Gigachat API error ${res.status}`);
+      
+      const data = await res.json();
+      return {
+        content: [{ type: "text", text: data.choices?.[0]?.message?.content || "" }]
+      };
+    }
+  } catch (error) {
+    throw new Error(`Gigachat error: ${error.message}`);
+  }
 }
 
 // ─── PERIOD HELPER ────────────────────────────────────────────────────────────
@@ -220,25 +244,57 @@ function periodLabel(p) {
   return `${p.year}`;
 }
 
-// ─── TAVILY SEARCH ────────────────────────────────────────────────────────────
+// ─── TAVILY SEARCH (через Vercel proxy) ───────────────────────────────────────
 async function tavilySearch(query, addLog) {
-  const apiKey = import.meta.env.VITE_TAVILY_API_KEY || "";
-  if (!apiKey) throw new Error("Ключ Tavily не найден. Добавьте VITE_TAVILY_API_KEY в файл .env");
+  const isProduction = import.meta.env.PROD;
+  const hasLocalKey = import.meta.env.VITE_TAVILY_API_KEY;
+  const useProxy = isProduction || !hasLocalKey;
 
-  const res = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      api_key: apiKey,
-      query,
-      search_depth: "advanced",
-      max_results: 8,
-      include_answer: true,
-    }),
-  });
-  if (!res.ok) throw new Error(`Tavily error ${res.status}: ${await res.text()}`);
-  const data = await res.json();
-  return data.results || [];
+  try {
+    if (useProxy) {
+      // Используем Vercel Function proxy
+      const res = await fetch("/api/tavily", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          search_depth: "advanced",
+          max_results: 8,
+          include_answer: true,
+        }),
+      });
+      
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(`Tavily proxy error: ${error.error}`);
+      }
+      
+      const data = await res.json();
+      return data.results || [];
+    } else {
+      // Локальное развитие с VITE_TAVILY_API_KEY в .env
+      const apiKey = import.meta.env.VITE_TAVILY_API_KEY;
+      if (!apiKey) throw new Error("Ключ Tavily не найден. Добавьте VITE_TAVILY_API_KEY в файл .env");
+
+      const res = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: apiKey,
+          query,
+          search_depth: "advanced",
+          max_results: 8,
+          include_answer: true,
+        }),
+      });
+      
+      if (!res.ok) throw new Error(`Tavily error ${res.status}`);
+      const data = await res.json();
+      return data.results || [];
+    }
+  } catch (error) {
+    throw new Error(`Tavily search error: ${error.message}`);
+  }
 }
 
 // ─── WEB SEARCH + PARSE AGENT ─────────────────────────────────────────────────
