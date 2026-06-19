@@ -1,13 +1,4 @@
 {
   "buildCommand": "npm run build",
-  "outputDirectory": "dist",
-  "env": {
-    "GIGACHAT_API_KEY": "@gigachat_api_key",
-    "TAVILY_API_KEY": "@tavily_api_key"
-  },
-  "functions": {
-    "api/**/*.js": {
-      "runtime": "nodejs18.x"
-    }
-  }
+  "outputDirectory": "dist"
 }
