@@ -131,9 +131,6 @@ function parseExcel(file) {
   });
 }
 
-// ─── GIGACHAT API CALL ────────────────────────────────────────────────────────
-let gigachatTokenCache = { token: null, expiresAt: 0 };
-
 // ─── GIGACHAT API CALL (через Vercel proxy) ───────────────────────────────────
 let gigachatTokenCache = { token: null, expiresAt: 0 };
 
